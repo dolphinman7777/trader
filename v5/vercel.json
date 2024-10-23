@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "buildCommand": "turbo build",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "outputDirectory": ".next",
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/" }
+  ],
+  "ignoreCommand": "turbo-ignore"
+}
