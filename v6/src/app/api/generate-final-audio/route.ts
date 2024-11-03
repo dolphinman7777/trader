@@ -1,29 +1,32 @@
 import { NextResponse } from 'next/server';
+import { processAudio } from '@/utils/audioProcessing';
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+    responseLimit: false,
+  },
+};
 
 export async function POST(request: Request) {
   try {
     const audioDetails = await request.json();
     
-    // Use the audioDetails variable or remove it
-    console.log('Audio details:', audioDetails);
-    
-    // Here, implement the logic to generate the final audio
-    // This might involve mixing the TTS audio with the backing track,
-    // applying volumes, and creating the final audio file
-    
-    // For now, we'll just return a mock audio file
-    const audioBuffer = new ArrayBuffer(44100 * 2 * 2); // 2 seconds of silence
-    const blob = new Blob([audioBuffer], { type: 'audio/mp3' });
+    // Process audio and get S3/CloudFront URL
+    const audioUrl = await processAudio(audioDetails.audioBuffer);
 
-    return new NextResponse(blob, {
-      status: 200,
-      headers: {
-        'Content-Type': 'audio/mp3',
-        'Content-Disposition': 'attachment; filename="combined_affirmation_audio.mp3"',
-      },
+    return NextResponse.json({ 
+      success: true,
+      url: audioUrl,
+      expiresIn: 3600 // URL expiration in seconds
     });
   } catch (error) {
     console.error('Error generating final audio:', error);
-    return NextResponse.json({ error: 'Failed to generate final audio' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to generate final audio' }, 
+      { status: 500 }
+    );
   }
 }

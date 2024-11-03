@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'
 import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { NextPage } from 'next';
 import type { AudioContextType } from '../types/audio';
 import type { TTSResponse, APIError } from '../types/api';
+import { CircularProgress } from "@/components/ui/circular-progress"; // We'll create this component
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
 
@@ -143,6 +144,36 @@ interface AffirmationSearchProps {
   ttsVolume: number;
 }
 
+// Add this after your imports and before AnimatedBentoBox
+const PreviewCountdown: React.FC<{ startTime: number }> = ({ startTime }) => {
+  const [timeLeft, setTimeLeft] = useState(60); // 60 seconds
+  const [progress, setProgress] = useState(100);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const remaining = Math.max(60 - elapsed, 0);
+      const progressValue = (remaining / 60) * 100;
+      
+      setTimeLeft(remaining);
+      setProgress(progressValue);
+
+      if (remaining <= 0) {
+        clearInterval(interval);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [startTime]);
+
+  return (
+    <div className="flex items-center space-x-2 bg-yellow-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full shadow-md">
+      <CircularProgress value={progress} size={20} />
+      <span className="text-sm font-medium">{timeLeft}s</span>
+    </div>
+  );
+};
+
 function AffirmationSearch({ 
   onAffirmationGenerated, 
   isGenerating, 
@@ -151,7 +182,7 @@ function AffirmationSearch({
   setAffirmationAudioUrl,
   tokenBalance,
   setTokenBalance,
-  ttsVolume // Add this prop
+  ttsVolume
 }: AffirmationSearchProps) {
   const { user } = useUser();
   const [prompt, setPrompt] = useState('')
@@ -288,7 +319,7 @@ function AffirmationSearch({
 
   const generateAffirmation = async (prompts: string[]) => {
     if (prompts.length === 0) return;
-    const tokensPerPrompt = 2000;
+    const tokensPerPrompt = 1000; // Reduced from 2000 to 1000
     const totalTokensNeeded = prompts.length * tokensPerPrompt;
 
     if (tokenBalance < totalTokensNeeded) {
@@ -352,18 +383,15 @@ function AffirmationSearch({
           },
           body: JSON.stringify({ 
             text: newAffirmations.join(' '),
-            volume: ttsVolume // Now ttsVolume is defined and can be used here
+            volume: ttsVolume
           }),
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          console.error('Failed to generate TTS:', errorData);
-          throw new Error(`Failed to generate TTS: ${errorData.message || response.statusText}`);
+          throw new Error(`Failed to generate TTS: ${response.statusText}`);
         }
 
         const { audioUrl } = await response.json();
-        console.log('TTS conversion completed successfully');
         setAffirmationAudioUrl(audioUrl);
         onAffirmationGenerated(newAffirmations, audioUrl);
         toast({
@@ -392,7 +420,9 @@ function AffirmationSearch({
 
   return (
     <div className="w-full h-full flex flex-col">
-      <h2 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-gray-800 dark:text-gray-200 subtle-glow">Affirmation Creator</h2>
+      <h2 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-black drop-shadow-[0_4px_4px_rgba(147,51,234,0.5)]">
+        Affirmation Creator
+      </h2>
       <p className="text-sm text-gray-600 mb-2">Token Balance: {tokenBalance}</p>
       <div className="flex items-center space-x-2 mb-4">
         <Input
@@ -680,7 +710,7 @@ function AudioLayerPlayer({ onTrackSelect, audioRef }: {
 
   const togglePlayPause = () => {
     if (audioRef.current) {
-      if (isPlaying) {
+    if (isPlaying) {
         audioRef.current.pause();
       } else {
         audioRef.current.play();
@@ -894,6 +924,9 @@ export const Studio: React.FC = () => {
   const [ttsAudioDuration, setTtsAudioDuration] = useState(30); // Default to 30 seconds
 
   const [isWarningOpen, setIsWarningOpen] = useState(false);
+
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [previewStartTime, setPreviewStartTime] = useState(0);
 
   useEffect(() => {
     return () => {
@@ -1210,35 +1243,73 @@ export const Studio: React.FC = () => {
 
   const handlePayment = async () => {
     try {
+      console.log('Starting payment process...');
+      const stripe = await stripePromise;
+      if (!stripe) {
+        console.error('Stripe failed to initialize');
+        throw new Error('Stripe failed to initialize');
+      }
+
+      // Check if required audio is generated
+      if (!ttsAudioUrl) {
+        console.warn('TTS audio URL is missing');
+        toast({
+          description: "Please generate affirmations before proceeding to payment",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Gather audio details
+      const audioDetails = {
+        ttsAudioUrl,
+        selectedBackingTrack,
+        ttsVolume,
+        backingTrackVolume,
+        trackDuration,
+        ttsDuration,
+        playbackRate
+      };
+
+      console.log('Audio details:', audioDetails);
+
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          audioDetails,
+          email: user?.emailAddresses?.[0]?.emailAddress
+        }),
       });
+
+      console.log('Checkout session response status:', response.status);
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Payment failed: ${errorData}`);
+        const errorData = await response.json();
+        console.error('Checkout session creation failed:', errorData);
+        throw new Error(errorData.details || 'Failed to create checkout session');
       }
 
-      const session = await response.json();
+      const { sessionId } = await response.json();
+      console.log('Received session ID:', sessionId);
       
-      const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
-      if (!stripe) {
-        throw new Error('Stripe failed to initialize');
-      }
-
-      const { error } = await stripe.redirectToCheckout({
-        sessionId: session.id
+      // Redirect to Stripe Checkout
+      const result = await stripe.redirectToCheckout({
+        sessionId,
       });
 
-      if (error) {
-        throw new Error(error.message);
+      if (result.error) {
+        console.error('Stripe redirect error:', result.error);
+        throw new Error(result.error.message);
       }
     } catch (error) {
-      console.error('Payment failed:', error);
-      // Handle error appropriately (e.g., show error message to user)
+      console.error('Payment error:', error);
+      toast({
+        description: error instanceof Error ? error.message : 'Failed to process payment',
+        variant: "destructive",
+      });
     }
   };
 
@@ -1336,6 +1407,7 @@ export const Studio: React.FC = () => {
     }
   };
 
+  // Update the handleGlobalPlayPause function
   const handleGlobalPlayPause = () => {
     if (audioRef.current && backingTrackRef.current) {
       if (isGlobalPlaying) {
@@ -1344,7 +1416,12 @@ export const Studio: React.FC = () => {
         backingTrackRef.current.pause();
         setIsTtsPlaying(false);
         setIsBackingTrackPlaying(false);
+        setIsPreviewMode(false); // Stop preview mode when pausing
       } else {
+        // Start preview mode when playing
+        setIsPreviewMode(true);
+        setPreviewStartTime(Date.now());
+        
         // Play both TTS and backing track
         audioRef.current.play().catch(error => console.error('Error playing TTS audio:', error));
         backingTrackRef.current.play().catch(error => console.error('Error playing backing track:', error));
@@ -1355,10 +1432,29 @@ export const Studio: React.FC = () => {
     }
   };
 
-  // Update this useEffect to sync the global playing state
+  // Add this useEffect to handle the preview time limit
   useEffect(() => {
-    setIsGlobalPlaying(isTtsPlaying || isBackingTrackPlaying);
-  }, [isTtsPlaying, isBackingTrackPlaying]);
+    if (isPreviewMode) {
+      const timeoutId = setTimeout(() => {
+        setIsPreviewMode(false);
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        if (backingTrackRef.current) {
+          backingTrackRef.current.pause();
+        }
+        setIsGlobalPlaying(false);
+        setIsTtsPlaying(false);
+        setIsBackingTrackPlaying(false);
+        
+        toast({
+          description: "Preview time limit reached (1 minute)",
+        });
+      }, 60000); // 60 seconds
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isPreviewMode]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -1628,7 +1724,7 @@ export const Studio: React.FC = () => {
   };
 
   return (
-    <div className="container mx-auto p-2 min-h-screen relative font-sans bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 flex flex-col">
+    <div className="container mx-auto p-2 min-h-screen relative font-sans bg-white flex flex-col">
       <style jsx global>{`
         @keyframes subtle-glow {
           0%, 100% { 
@@ -1685,7 +1781,7 @@ export const Studio: React.FC = () => {
       <div className="bento-grid gap-2 auto-rows-auto flex-grow">
         <AnimatedBentoBox 
           className="bento-affirmation-creator"
-          gradient="bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700"
+          gradient="bg-gradient-to-br from-gray-200 to-gray-300"
         >
           <Card className="h-full bg-transparent border-none shadow-none">
             <CardContent className="p-2 sm:p-4 flex flex-col h-full">
@@ -1705,7 +1801,7 @@ export const Studio: React.FC = () => {
 
         <AnimatedBentoBox 
           className="bento-generated-affirmations"
-          gradient="bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700"
+          gradient="bg-gradient-to-br from-gray-200 to-gray-300"
         >
           <Card className="h-full bg-transparent border-none shadow-none">
             <CardContent className="p-2 sm:p-4 h-full flex flex-col">
@@ -1720,11 +1816,13 @@ export const Studio: React.FC = () => {
 
         <AnimatedBentoBox 
           className="bento-subliminal-player"
-          gradient="bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700"
+          gradient="bg-gradient-to-br from-gray-200 to-gray-300"
         >
           <Card className="h-full bg-transparent border-none shadow-none">
             <CardContent className="p-2 sm:p-4 h-full flex flex-col">
-              <h2 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-gray-800 dark:text-gray-100 drop-shadow-green-glow">Subliminal Player</h2>
+              <h2 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-black text-green-600 drop-shadow-green-glow">
+                Subliminal Player
+              </h2>
               <SubliminalAudioPlayer 
                 audioUrl={ttsAudioUrl} 
                 isLoading={isTtsLoading}
@@ -1744,11 +1842,13 @@ export const Studio: React.FC = () => {
 
         <AnimatedBentoBox 
           className="bento-audio-layer"
-          gradient="bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700"
+          gradient="bg-gradient-to-br from-gray-200 to-gray-300"
         >
           <Card className="h-full bg-transparent border-none shadow-none">
             <CardContent className="p-2 sm:p-4 h-full flex flex-col">
-              <h2 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-gray-800 dark:text-gray-100 drop-shadow-green-glow">Audio Layer</h2>
+              <h2 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-black text-green-600 drop-shadow-green-glow">
+                Audio Layer
+              </h2>
               <AudioLayerPlayer 
                 onTrackSelect={setSelectedBackingTrack} 
                 audioRef={backingTrackRef}
@@ -1759,11 +1859,13 @@ export const Studio: React.FC = () => {
 
         <AnimatedBentoBox 
           className="bento-audio-controls"
-          gradient="bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700"
+          gradient="bg-gradient-to-br from-gray-200 to-gray-300"
         >
           <Card className="h-full overflow-hidden bg-transparent border-none shadow-none">
             <CardContent className="p-2 sm:p-4 flex flex-col h-full">
-              <h2 className="text-lg sm:text-xl font-bold mb-2 text-white">Audio Controls</h2>
+              <h2 className="text-2xl font-bold mb-4 text-blue-600 drop-shadow-[0_4px_4px_rgba(0,0,255,0.25)]">
+                Audio Controls
+              </h2>
               
               <div className="space-y-4 flex flex-col flex-grow overflow-y-auto text-xs sm:text-sm">
                 <div className="bg-white p-4 rounded-xl shadow-md">
@@ -1830,16 +1932,19 @@ export const Studio: React.FC = () => {
 
                 {/* Global Play/Pause button */}
                 <div className="bg-white p-2 rounded-xl shadow-md flex justify-center items-center flex-grow mt-auto">
-                  <Button
-                    onClick={handleGlobalPlayPause}
-                    className="w-28 h-28 rounded-full flex items-center justify-center bg-blue-500 hover:bg-blue-600 text-white"
-                  >
-                    {isGlobalPlaying ? (
-                      <PauseIcon className="h-14 w-14" />
-                    ) : (
-                      <PlayIcon className="h-14 w-14" />
-                    )}
-                  </Button>
+                  <div className="flex flex-col items-center space-y-3"> {/* Changed to flex-col and space-y-3 */}
+                    <Button
+                      onClick={handleGlobalPlayPause}
+                      className="w-28 h-28 rounded-full flex items-center justify-center bg-blue-500 hover:bg-blue-600 text-white"
+                    >
+                      {isGlobalPlaying ? (
+                        <PauseIcon className="h-14 w-14" />
+                      ) : (
+                        <PlayIcon className="h-14 w-14" />
+                      )}
+                    </Button>
+                    {isPreviewMode && <PreviewCountdown startTime={previewStartTime} />}
+                  </div>
                 </div>
               </div>
             </CardContent>

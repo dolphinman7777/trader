@@ -1,56 +1,47 @@
 import { NextResponse } from 'next/server';
-import { PollyClient, SynthesizeSpeechCommand, Engine, SynthesizeSpeechCommandInput } from "@aws-sdk/client-polly";
-
-const polly = new PollyClient({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-});
-
-console.log('AWS Region:', process.env.AWS_REGION);
-console.log('AWS Access Key ID:', process.env.AWS_ACCESS_KEY_ID ? 'Set' : 'Not set');
-console.log('AWS Secret Access Key:', process.env.AWS_SECRET_ACCESS_KEY ? 'Set' : 'Not set');
+import axios from 'axios';
 
 export async function POST(request: Request) {
   try {
-    const { text } = await request.json();
+    const { text, volume } = await request.json();
 
-    if (!text || typeof text !== 'string') {
-      return NextResponse.json({ error: 'Invalid or missing text parameter' }, { status: 400 });
+    if (!text) {
+      return NextResponse.json({ error: 'Text is required' }, { status: 400 });
     }
 
-    const params: SynthesizeSpeechCommandInput = {
-      Engine: "neural",
-      LanguageCode: "en-US",
-      Text: text,
-      TextType: "text",
-      OutputFormat: "mp3",
-      VoiceId: "Joanna",
-    };
-
-    const command = new SynthesizeSpeechCommand(params);
-    const { AudioStream } = await polly.send(command);
-
-    if (!AudioStream) {
-      throw new Error('Failed to generate audio stream');
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      throw new Error('Elevenlabs API key is missing');
     }
 
-    const buffer = await AudioStream.transformToByteArray();
-
-    return new NextResponse(buffer, {
-      headers: {
-        'Content-Type': 'audio/mpeg',
-        'Content-Disposition': 'attachment; filename="tts_audio.mp3"',
+    const response = await axios.post(
+      'https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM',
+      {
+        text,
+        model_id: "eleven_monolingual_v1",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.5,
+          volume: volume || 1
+        }
       },
-    });
+      {
+        headers: {
+          'Accept': 'audio/mpeg',
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'arraybuffer'
+      }
+    );
+
+    const audioBuffer = Buffer.from(response.data);
+    const audioBase64 = audioBuffer.toString('base64');
+    const audioUrl = `data:audio/mpeg;base64,${audioBase64}`;
+
+    return NextResponse.json({ audioUrl });
   } catch (error) {
-    console.error('Error in TTS generation:', error);
-    if (error instanceof Error) {
-      return NextResponse.json({ error: `TTS generation failed: ${error.message}` }, { status: 500 });
-    } else {
-      return NextResponse.json({ error: 'An unknown error occurred during TTS generation' }, { status: 500 });
-    }
+    console.error('Error in TTS conversion:', error);
+    return NextResponse.json({ error: 'TTS conversion failed' }, { status: 500 });
   }
 }

@@ -5,7 +5,12 @@ export async function GET(req: Request) {
   try {
     const result = await getQueueResult(AFFIRMATION_QUEUE);
     if (result) {
-      return NextResponse.json(result);
+      const cacheControl = 'no-store'; // Prevent caching for dynamic data
+      return NextResponse.json(result, {
+        headers: {
+          'Cache-Control': cacheControl,
+        },
+      });
     } else {
       return NextResponse.json({ status: 'pending' });
     }

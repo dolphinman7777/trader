@@ -62,9 +62,9 @@ export async function POST(request: Request) {
       model: "gpt-3.5-turbo",
       messages: [
         { role: "system", content: systemInstructions },
-        { role: "user", content: `Generate affirmations for: ${prompt}. Each affirmation should start with a gratitude phrase, be in present tense, and avoid negative language. Return each affirmation on a new line without numbering.` }
+        { role: "user", content: `Generate 5 affirmations for: ${prompt}. Each affirmation should start with a gratitude phrase, be in present tense, and avoid negative language. Return each affirmation on a new line without numbering.` } // Reduced from 10 to 5 affirmations
       ],
-      max_tokens: maxTokens || 1000, // Use the provided maxTokens or default to 1000
+      max_tokens: maxTokens || 1000, // Reduced from 2000 to 1000
       temperature: 0.7,
     });
 
