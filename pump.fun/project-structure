@@ -1,0 +1,22 @@
+pump.fun/
+├── src/
+│   ├── ai/
+│   │   └── ollama_client.py
+│   ├── blockchain/
+│   │   └── solana_client.py
+│   ├── social/
+│   │   └── twitter_scanner.py
+│   ├── trading/
+│   │   └── pump_trader.py
+│   ├── utils/
+│   │   └── logger.py
+│   ├── database/
+│   │   └── db_manager.py
+│   ├── cli/
+│   │   └── trading_cli.py
+│   └── main.py
+├── venv/
+├── logs/
+├── requirements.txt
+├── .env
+└── README.md 
